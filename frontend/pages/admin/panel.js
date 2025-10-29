@@ -243,19 +243,25 @@ const AdminPanel = () => {
 
       // Add related books and their cover images
       if (validBooks.length > 0) {
-        // Add related books data without cover_image files
+        // Add related books data with cover_image_url for existing images
         const booksData = validBooks.map(book => {
           const { cover_image, ...bookData } = book
+          // Include cover_image_url if present (for preserving existing images)
+          if (book.cover_image_url && !cover_image) {
+            bookData.cover_image_url = book.cover_image_url
+          }
           return bookData
         })
         formPayload.append('related_books', JSON.stringify(booksData))
         console.log('Related books JSON being sent:', JSON.stringify(booksData))
         
-        // Add cover image files separately
+        // Add cover image files separately (only new uploads)
         validBooks.forEach((book, index) => {
           if (book.cover_image && book.cover_image instanceof File) {
             formPayload.append(`book_cover_${index}`, book.cover_image)
             console.log(`Added cover image for book ${index}:`, book.cover_image.name)
+          } else if (book.cover_image_url) {
+            console.log(`Preserving existing cover image for book ${index}:`, book.cover_image_url)
           }
         })
       }
@@ -314,14 +320,22 @@ const AdminPanel = () => {
       related_books: []
     })
     
-    // Load related books for editing
-    if (blog.related_books) {
+    // Load related books for editing with proper image handling
+    if (blog.related_books && Array.isArray(blog.related_books) && blog.related_books.length > 0) {
       const formattedBooks = blog.related_books.map(book => ({
-        ...book,
-        cover_image: null, // Reset file input for editing
-        cover_image_url: book.cover_image // Store existing image URL for preview
+        id: book.id,
+        title: book.title || '',
+        author: book.author || '',
+        purchase_link: book.purchase_link || '',
+        description: book.description || '',
+        price: book.price || '',
+        cover_image: null, // File object for new upload (initially null)
+        cover_image_url: book.cover_image || null // Preserve existing image URL
       }))
+      console.log('Loading related books for editing:', formattedBooks)
       setRelatedBooks(formattedBooks)
+    } else {
+      setRelatedBooks([])
     }
     
     setShowForm(true)
@@ -1066,15 +1080,30 @@ const AdminPanel = () => {
                             {/* Cover Image Preview */}
                             {(book.cover_image || book.cover_image_url) && (
                               <div>
-                                <label className="block text-xs font-medium text-slate-600 mb-1">Cover Preview</label>
-                                <img
-                                  src={book.cover_image ? URL.createObjectURL(book.cover_image) : book.cover_image_url}
-                                  alt="Book cover preview"
-                                  className="w-24 h-32 object-cover rounded border"
-                                  onError={(e) => {
-                                    e.target.style.display = 'none'
-                                  }}
-                                />
+                                <label className="block text-xs font-medium text-slate-600 mb-1">
+                                  Cover Preview {book.cover_image_url && !book.cover_image && (
+                                    <span className="text-green-600">(Current)</span>
+                                  )}
+                                </label>
+                                <div className="relative inline-block">
+                                  <img
+                                    src={book.cover_image ? URL.createObjectURL(book.cover_image) : book.cover_image_url}
+                                    alt="Book cover preview"
+                                    className="w-24 h-32 object-cover rounded border border-gray-300"
+                                    onError={(e) => {
+                                      e.target.style.display = 'none'
+                                      e.target.nextElementSibling.style.display = 'block'
+                                    }}
+                                  />
+                                  <div style={{display: 'none'}} className="w-24 h-32 flex items-center justify-center bg-gray-100 rounded border border-gray-300 text-xs text-gray-500">
+                                    Image not found
+                                  </div>
+                                </div>
+                                {book.cover_image_url && !book.cover_image && (
+                                  <p className="text-xs text-gray-500 mt-1">
+                                    Upload new image to replace
+                                  </p>
+                                )}
                               </div>
                             )}
 
