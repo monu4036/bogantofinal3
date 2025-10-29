@@ -402,7 +402,41 @@ function updateBlog($db) {
             }
         }
         
-        $response_data = ['message' => 'Blog updated successfully'];
+        // Fetch updated blog data with related books
+        $fetch_query = "SELECT * FROM blogs WHERE id = :id";
+        $fetch_stmt = $db->prepare($fetch_query);
+        $fetch_stmt->bindParam(':id', $id, PDO::PARAM_INT);
+        $fetch_stmt->execute();
+        $updated_blog = $fetch_stmt->fetch(PDO::FETCH_ASSOC);
+        
+        // Fetch related books
+        $books_query = "SELECT * FROM related_books WHERE blog_id = :blog_id ORDER BY id ASC";
+        $books_stmt = $db->prepare($books_query);
+        $books_stmt->bindParam(':blog_id', $id, PDO::PARAM_INT);
+        $books_stmt->execute();
+        $related_books_data = $books_stmt->fetchAll(PDO::FETCH_ASSOC);
+        
+        // Format related books with full image URLs
+        $formatted_books = array_map(function($book) {
+            return [
+                'id' => (int)$book['id'],
+                'blog_id' => (int)$book['blog_id'],
+                'title' => $book['title'],
+                'author' => $book['author'] ?? null,
+                'purchase_link' => $book['purchase_link'],
+                'cover_image' => $book['cover_image'] ? getFullImageUrl($book['cover_image']) : null,
+                'description' => $book['description'],
+                'price' => $book['price'],
+                'created_at' => $book['created_at']
+            ];
+        }, $related_books_data);
+        
+        $updated_blog['related_books'] = $formatted_books;
+        
+        $response_data = [
+            'message' => 'Blog updated successfully',
+            'blog' => $updated_blog
+        ];
         
         // Add related books info to response if applicable
         if (isset($books_added)) {
@@ -470,16 +504,31 @@ function addRelatedBooks($db, $blog_id, $books) {
                 $cover_image = null;
                 $cover_image_key = 'book_cover_' . $index;
                 
+                // Priority 1: Check if a new file was uploaded
                 if (isset($_FILES[$cover_image_key]) && $_FILES[$cover_image_key]['error'] === UPLOAD_ERR_OK) {
                     $cover_image = uploadFileToSubfolder($_FILES[$cover_image_key], 'book_covers');
+                    error_log("Book $index: New cover image uploaded - $cover_image");
                 }
                 
-                // Use provided cover_image if no file was uploaded
-                if (!$cover_image && isset($book['cover_image'])) {
+                // Priority 2: Use existing cover_image_url if no new file uploaded
+                if (!$cover_image && isset($book['cover_image_url']) && !empty($book['cover_image_url'])) {
+                    $cover_image = $book['cover_image_url'];
+                    // Filter out external URLs (only allow uploaded images or null)
+                    if (strpos($cover_image, 'http') === 0 && strpos($cover_image, '/uploads/') === false) {
+                        $cover_image = null;
+                    } else {
+                        error_log("Book $index: Preserving existing cover image - $cover_image");
+                    }
+                }
+                
+                // Priority 3: Use provided cover_image if available
+                if (!$cover_image && isset($book['cover_image']) && !empty($book['cover_image'])) {
                     $cover_image = $book['cover_image'];
                     // Filter out external URLs (only allow uploaded images or null)
                     if (strpos($cover_image, 'http') === 0 && strpos($cover_image, '/uploads/') === false) {
                         $cover_image = null;
+                    } else {
+                        error_log("Book $index: Using provided cover image - $cover_image");
                     }
                 }
                 
