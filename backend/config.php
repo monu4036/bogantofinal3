@@ -70,23 +70,48 @@ function generateSlug($string) {
 }  
 
 // Helper function to upload file
-function uploadFile($file, $upload_dir = '../uploads/') {
+function uploadFile($file, $subfolder = '') {
+    $upload_dir = '../uploads/';
+    
+    // Create subfolder if specified
+    if ($subfolder) {
+        $upload_dir .= $subfolder . '/';
+        if (!is_dir($upload_dir)) {
+            mkdir($upload_dir, 0755, true);
+        }
+    }
+    
+    // Check for upload errors
     if (!isset($file['name']) || $file['error'] !== UPLOAD_ERR_OK) {
+        error_log('Upload error: ' . $file['error']);
         return false;
     }
     
-    $allowed_types = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+    // Validate file type
+    $allowed_types = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
     if (!in_array($file['type'], $allowed_types)) {
+        error_log('Invalid file type: ' . $file['type']);
         return false;
     }
     
-    $filename = time() . '_' . basename($file['name']);
-    $target_path = $upload_dir . $filename;
-    
-    if (move_uploaded_file($file['tmp_name'], $target_path)) {
-        return '/uploads/' . $filename;
+    // Validate file size (5MB max)
+    $max_size = 5 * 1024 * 1024; // 5MB
+    if ($file['size'] > $max_size) {
+        error_log('File too large: ' . $file['size']);
+        return false;
     }
     
+    // Generate unique filename
+    $extension = pathinfo($file['name'], PATHINFO_EXTENSION);
+    $filename = uniqid() . '_' . time() . '.' . $extension;
+    $file_path = $upload_dir . $filename;
+    
+    // Move uploaded file
+    if (move_uploaded_file($file['tmp_name'], $file_path)) {
+        return '/uploads/' . ($subfolder ? $subfolder . '/' : '') . $filename;
+    }
+    
+    error_log('Failed to move uploaded file to: ' . $file_path);
     return false;
 }
 
