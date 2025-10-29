@@ -177,6 +177,78 @@ function addBlog($db) {
 }
 
 function updateBlog($db) {
+    // PHP doesn't populate $_POST and $_FILES for PUT requests with multipart/form-data
+    // We need to manually parse the input stream
+    $contentType = $_SERVER['CONTENT_TYPE'] ?? '';
+    $isPutWithFormData = $_SERVER['REQUEST_METHOD'] === 'PUT' && 
+                         (strpos($contentType, 'multipart/form-data') !== false);
+    
+    if ($isPutWithFormData) {
+        // Parse multipart/form-data for PUT requests
+        $_PUT = array();
+        $_FILES_PUT = array();
+        
+        $raw_data = file_get_contents('php://input');
+        $boundary = substr($raw_data, 0, strpos($raw_data, "\r\n"));
+        
+        if (empty($boundary)) {
+            error_log('Failed to parse boundary from PUT request');
+            sendResponse(['error' => 'Invalid multipart/form-data format'], 400);
+        }
+        
+        $parts = array_slice(explode($boundary, $raw_data), 1);
+        
+        foreach ($parts as $part) {
+            if ($part == "--\r\n") break;
+            if (empty($part)) continue;
+            
+            $sections = explode("\r\n\r\n", $part, 2);
+            if (count($sections) < 2) continue;
+            
+            $headers = $sections[0];
+            $content = rtrim($sections[1], "\r\n");
+            
+            // Parse Content-Disposition header
+            if (preg_match('/Content-Disposition:.*?name="([^"]+)"(?:.*?filename="([^"]+)")?/i', $headers, $matches)) {
+                $name = $matches[1];
+                $filename = $matches[2] ?? null;
+                
+                if ($filename) {
+                    // This is a file upload
+                    $temp_filename = tempnam(sys_get_temp_dir(), 'php_upload_');
+                    file_put_contents($temp_filename, $content);
+                    
+                    // Determine file type
+                    $finfo = finfo_open(FILEINFO_MIME_TYPE);
+                    $mime_type = finfo_file($finfo, $temp_filename);
+                    finfo_close($finfo);
+                    
+                    $_FILES_PUT[$name] = array(
+                        'name' => $filename,
+                        'type' => $mime_type,
+                        'tmp_name' => $temp_filename,
+                        'error' => UPLOAD_ERR_OK,
+                        'size' => strlen($content)
+                    );
+                } else {
+                    // This is a regular field
+                    $_PUT[$name] = $content;
+                }
+            }
+        }
+        
+        // Use parsed data for PUT requests
+        $_POST = $_PUT;
+        $_FILES = $_FILES_PUT;
+        
+        error_log('Parsed PUT FormData - POST: ' . print_r($_POST, true));
+        error_log('Parsed PUT FormData - FILES: ' . print_r(array_keys($_FILES), true));
+    }
+    
+    // Log incoming request for debugging
+    error_log('PUT Request - POST data: ' . print_r($_POST, true));
+    error_log('PUT Request - FILES data: ' . print_r($_FILES, true));
+    
     try {
         // Check if this is a form data request (with files) or JSON request
         $isFormData = isset($_POST['id']);
@@ -193,6 +265,9 @@ function updateBlog($db) {
             $meta_description = isset($_POST['meta_description']) ? sanitizeInput($_POST['meta_description']) : null;
             $is_featured = isset($_POST['is_featured']) ? (bool)$_POST['is_featured'] : false;
             $status = isset($_POST['status']) ? sanitizeInput($_POST['status']) : 'draft';
+            
+            // Log parsed values for debugging
+            error_log("Parsed FormData - ID: $id, Title: $title, Content length: " . strlen($content ?? '') . ", Category: $category_id");
             
             // Handle file uploads for update
             $featured_image = null;
@@ -242,8 +317,24 @@ function updateBlog($db) {
             $updateImages = false;
         }
         
-        if (!$id || !$title || !$content || !$category_id) {
-            sendResponse(['error' => 'ID, title, content, and category are required'], 400);
+        // Enhanced validation with detailed error messages
+        $errors = [];
+        if (!$id) {
+            $errors[] = 'Blog ID is required for update';
+        }
+        if (!$title || trim($title) === '') {
+            $errors[] = 'Title is required and cannot be empty';
+        }
+        if (!$content || trim($content) === '') {
+            $errors[] = 'Content is required and cannot be empty';
+        }
+        if (!$category_id || !is_numeric($category_id)) {
+            $errors[] = 'Valid category is required';
+        }
+        
+        if (!empty($errors)) {
+            error_log('Update validation errors: ' . implode(', ', $errors));
+            sendResponse(['error' => 'Validation failed', 'details' => $errors], 422);
         }
         
         // Update blog with or without images
